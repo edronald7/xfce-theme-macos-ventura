@@ -1,0 +1,88 @@
+xfce-theme-macos-ventura
+Copyright 2026 edronald7
+
+Este producto incluye software desarrollado para el proyecto
+xfce-theme-macos-ventura, distribuido bajo la Apache License 2.0
+(ver el archivo LICENSE).
+
+================================================================================
+Alcance de la licencia Apache 2.0
+================================================================================
+
+La Apache License 2.0 cubre las aportaciones propias de este repositorio:
+
+  scripts/install.sh        instalador
+  scripts/uninstall.sh      desinstalador
+  scripts/macos-theme       comando de activación y desactivación
+  conky/ventura.conf        monitor de recursos: ventana principal
+  conky/gpu.conf            monitor de recursos: ficha de gráficos
+  conky/ventura.lua         dibujo de ambas tarjetas (Cairo)
+  conky/start.sh            lanzador del monitor
+  README.md, NOTICE         documentación
+
+El resto del contenido pertenece a terceros y conserva la licencia de su autor
+original. Nada de lo que sigue se relicencia bajo Apache 2.0.
+
+================================================================================
+1. Proyecto base: ventura-xfce — Copyright (c) 2023 ibm-7094 — Licencia MIT
+================================================================================
+
+Origen: https://github.com/ibm-7094a/ventura-xfce
+Material reutilizado en este repositorio: config/, dock/, wallpapers/,
+la selección y empaquetado de temas e iconos, y el historial de git previo.
+
+Texto original de la licencia:
+
+  Copyright © 2023 ibm-7094
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+================================================================================
+2. WhiteSur — Copyright (c) vinceliuice — Licencia GPL-3.0
+================================================================================
+
+  gtk/gtkthemes/WhiteSur-Light.tar.xz   https://github.com/vinceliuice/WhiteSur-gtk-theme
+  gtk/gtkthemes/WhiteSur-Dark.tar.xz    https://github.com/vinceliuice/WhiteSur-gtk-theme
+  gtk/icons/01-WhiteSur.tar.xz          https://github.com/vinceliuice/WhiteSur-icon-theme
+  cursors/WhiteSur-cursors.tar.xz       https://github.com/vinceliuice/WhiteSur-cursors
+
+Se redistribuyen sin modificar, bajo los términos de la GPL-3.0.
+
+================================================================================
+3. Lightpad — Copyright (c) libredeb — Licencia GPL-3.0
+================================================================================
+
+  lightpad/     https://github.com/libredeb/lightpad
+
+Código fuente completo incluido; su licencia está en lightpad/COPYING. El
+instalador aplica un parche mínimo (meson.source_root → project_source_root)
+sobre una copia temporal, sin modificar los archivos del repositorio.
+
+================================================================================
+4. Iconos de macOS
+================================================================================
+
+  gtk/icons/custom.tar.xz    y los iconos referenciados desde dock/
+
+Son obra de Apple Inc. Se incluyen únicamente con fines de personalización
+visual del escritorio. No se otorga ni se reclama licencia alguna sobre ellos;
+Apple Inc. conserva todos sus derechos.
+
+Apple, macOS y Ventura son marcas registradas de Apple Inc. Este proyecto no
+está afiliado a Apple Inc., ni patrocinado ni respaldado por ella.
