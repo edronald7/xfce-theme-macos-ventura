@@ -54,7 +54,14 @@ else
     warn "Sin copia de seguridad: me salto la restauración"
 fi
 
-# 2. lightpad
+# 2. pantalla de inicio de sesión (añadida con scripts/login-screen)
+if [ -f /etc/xdg/lightdm/lightdm-gtk-greeter.conf.d/90-ventura-xfce.conf ]; then
+    if confirm "¿Devolver también la pantalla de inicio de sesión de Xubuntu? Requiere sudo"; then
+        "$(dirname "$0")/login-screen" remove || warn "no se pudo quitar; prueba: ./scripts/login-screen remove"
+    fi
+fi
+
+# 2b. lightpad
 if [ -d "$PAYLOAD/src/lightpad/build" ]; then
     if confirm "¿Desinstalar también lightpad (Launchpad)? Requiere sudo"; then
         msg "Desinstalando lightpad"

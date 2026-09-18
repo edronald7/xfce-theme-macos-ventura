@@ -13,7 +13,8 @@
 #     encendía /Gtk/Modules ni ShellShowsMenubar, así que salía siempre vacío
 #   * añade el monitor de recursos en conky (tarjeta translúcida estilo macOS)
 #
-# Uso:  ./scripts/install.sh [--no-deps] [--with-lightpad]
+# Uso:  ./scripts/install.sh [--no-deps] [--with-lightpad] [--with-login]
+#         --with-login   también la pantalla de inicio de sesión (scripts/login-screen, usa sudo)
 
 set -euo pipefail
 
@@ -22,6 +23,7 @@ PAYLOAD="${XDG_DATA_HOME:-$HOME/.local/share}/ventura-xfce"
 BINDIR="$HOME/.local/bin"
 WITH_DEPS=1
 WITH_LIGHTPAD=0
+WITH_LOGIN=0
 MISSING_APPS=()
 
 msg()  { printf '\033[1;34m::\033[0m %s\n' "$*"; }
@@ -33,6 +35,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --no-deps)       WITH_DEPS=0 ;;
         --with-lightpad) WITH_LIGHTPAD=1 ;;
+        --with-login)    WITH_LOGIN=1 ;;
         -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) die "opción desconocida: $1" ;;
     esac; shift
@@ -221,6 +224,13 @@ else
     msg "Me salto lightpad (usa --with-lightpad si quieres el Launchpad)"
 fi
 
+# ------------------------------------------------------- pantalla de login
+if [ "$WITH_LOGIN" -eq 1 ]; then
+    msg "Aplicando el tema a la pantalla de inicio de sesión"
+    "$REPO/scripts/login-screen" apply \
+        || warn "no se pudo aplicar a la pantalla de inicio de sesión; el resto del tema funciona"
+fi
+
 # ------------------------------------------------------------------ comando
 msg "Instalando el comando macos-theme en $BINDIR"
 mkdir -p "$BINDIR"
@@ -234,6 +244,8 @@ echo "   macos-theme apply          activa el look macOS (oscuro)"
 echo "   macos-theme apply --light  variante clara"
 echo "   macos-theme remove         restaura tu configuración anterior"
 echo "   macos-theme status         estado actual"
+echo
+[ "$WITH_LOGIN" -eq 1 ] || echo "   Pantalla de inicio de sesión (pide sudo): ./scripts/login-screen apply"
 echo
 if [ ${#MISSING_APPS[@]} -gt 0 ]; then
     warn "Estos programas los usa el tema pero no los tienes instalados:"

@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+# login-screen — aplica el look Ventura a la pantalla de inicio de sesión (LightDM).
+#
+#   ./scripts/login-screen apply [--light|--dark] [--show-users]
+#   ./scripts/login-screen remove
+#   ./scripts/login-screen status
+#
+#   --show-users   muestra la lista de usuarios con su foto, como macOS
+#                  (Debian/Ubuntu la ocultan por defecto y piden escribir el nombre)
+#
+# Va aparte de macos-theme porque necesita sudo: el greeter corre como el usuario
+# 'lightdm' y no puede leer tu $HOME, así que tema, cursor y fondo se copian a
+# /usr/share. Todo lo instalado lleva el nombre ventura-xfce y 'remove' lo borra
+# entero; no se modifica ningún fichero del sistema, solo se añaden.
+
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+THEME_DIR=/usr/share/themes/ventura-xfce-login
+CURSOR_DIR=/usr/share/icons/ventura-xfce-cursors
+BG_DIR=/usr/share/backgrounds/ventura-xfce
+GREETER_CONF=/etc/xdg/lightdm/lightdm-gtk-greeter.conf.d/90-ventura-xfce.conf
+LIGHTDM_CONF=/etc/lightdm/lightdm.conf.d/90-ventura-xfce.conf
+MAIN_CONF=/etc/lightdm/lightdm-gtk-greeter.conf
+
+msg()  { printf '\033[1;34m::\033[0m %s\n' "$*"; }
+ok()   { printf '\033[1;32m ✓\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m ! \033[0m%s\n' "$*" >&2; }
+die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" -ne 0 ] || die "No lo ejecutes como root: pedirá sudo cuando lo necesite."
+
+# CSS del greeter; $1 es el color de la tarjeta (varía entre claro y oscuro)
+greeter_css() {
+    cat <<EOF
+
+/* >>> ventura-xfce: pantalla de inicio de sesión >>> */
+/* barra superior: transparente sobre el fondo, como en macOS */
+#panel_window {
+  background: transparent;
+  box-shadow: none;
+}
+#panel_window menubar,
+#panel_window menubar > menuitem {
+  background: transparent;
+  box-shadow: none;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+#panel_window menubar > menuitem {
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+#panel_window menubar > menuitem:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* ventana de acceso: tarjeta translúcida con esquinas redondeadas */
+#login_window,
+#power_window {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+#login_window #content_frame,
+#power_window #content_frame {
+  background-color: $1;
+  border-radius: 18px 18px 0 0;
+  padding-bottom: 12px;
+}
+#login_window #buttonbox_frame,
+#power_window #buttonbox_frame {
+  background-color: $1;
+  border-radius: 0 0 18px 18px;
+  padding-top: 6px;
+}
+#login_window frame > border,
+#power_window frame > border {
+  border: none;
+}
+#login_window #user_combobox {
+  font-size: 16px;
+  font-weight: 600;
+}
+#login_window entry {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+#login_window button,
+#power_window button {
+  min-height: 30px;
+  padding: 0 16px;
+  border-radius: 8px;
+}
+#login_window #login_button,
+#power_window #power_ok_button {
+  background: #0a84ff;
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: none;
+}
+#login_window #login_button:hover,
+#power_window #power_ok_button:hover {
+  background: #3395ff;
+}
+#greeter_infobar {
+  border-radius: 8px;
+}
+/* <<< ventura-xfce <<< */
+EOF
+}
+
+cmd_apply() {
+    local variant=dark show_users=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --light) variant=light ;;
+            --dark)  variant=dark ;;
+            --show-users) show_users=1 ;;
+            *) die "opción desconocida: $1" ;;
+        esac; shift
+    done
+
+    [ -x /usr/sbin/lightdm-gtk-greeter ] \
+        || die "No encuentro lightdm-gtk-greeter: este script solo sirve para LightDM con el greeter GTK"
+    grep -qs lightdm /etc/X11/default-display-manager \
+        || warn "LightDM no parece ser tu gestor de sesiones; los cambios no se verán hasta que lo sea"
+    [ -f "$REPO/gtk/gtkthemes/WhiteSur-Dark.tar.xz" ] || die "Ejecútalo desde el repo ventura-xfce (falta gtk/gtkthemes)."
+
+    local gtk_theme card wallpaper
+    if [ "$variant" = light ]; then
+        gtk_theme=WhiteSur-Light; card="rgba(246, 246, 246, 0.62)"; wallpaper=ventura-light.jpeg
+    else
+        gtk_theme=WhiteSur-Dark;  card="rgba(28, 28, 30, 0.58)";    wallpaper=ventura-dark.jpg
+    fi
+
+    msg "Preparando tema, cursor y fondo ($variant)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+
+    tar -xf "$REPO/gtk/gtkthemes/$gtk_theme.tar.xz" -C "$tmp" "$gtk_theme/gtk-3.0"
+    mkdir -p "$tmp/theme"
+    mv "$tmp/$gtk_theme/gtk-3.0" "$tmp/theme/gtk-3.0"
+    greeter_css "$card" >> "$tmp/theme/gtk-3.0/gtk.css"
+    printf '[Desktop Entry]\nType=X-GNOME-Metatheme\nName=ventura-xfce-login\nComment=WhiteSur (%s) para la pantalla de inicio de sesión\n\n[X-GNOME-Metatheme]\nGtkTheme=ventura-xfce-login\n' \
+        "$variant" > "$tmp/theme/index.theme"
+
+    tar -xf "$REPO/cursors/WhiteSur-cursors.tar.xz" -C "$tmp"
+
+    local font="" icons=elementary-xfce-dark
+    fc-list 2>/dev/null | grep -qi 'Inter' && font="Inter 11"
+    [ -d /usr/share/icons/$icons ] || icons=Adwaita
+
+    {
+        echo "# ventura-xfce: lo gestiona scripts/login-screen, se borra con 'login-screen remove'"
+        echo "# variant=$variant"
+        echo "[greeter]"
+        echo "theme-name=ventura-xfce-login"
+        echo "icon-theme-name=$icons"
+        echo "cursor-theme-name=ventura-xfce-cursors"
+        echo "background=$BG_DIR/$wallpaper"
+        echo "user-background=false"
+        [ -n "$font" ] && echo "font-name=$font"
+        echo "position=50%,center 50%,center"
+        echo "round-user-image=true"
+        echo "panel-position=top"
+        echo "indicators=~spacer;~clock;~spacer;~session;~language;~a11y;~power"
+        echo "clock-format=%a %e %b  %H:%M"
+    } > "$tmp/greeter.conf"
+
+    msg "Copiando a /usr/share y /etc (se te pedirá la contraseña de sudo)"
+    sudo rm -rf "$THEME_DIR" "$CURSOR_DIR" "$BG_DIR"
+    sudo mkdir -p "$(dirname "$GREETER_CONF")" "$BG_DIR"
+    sudo cp -a "$tmp/theme" "$THEME_DIR"
+    sudo cp -a "$tmp/WhiteSur-cursors" "$CURSOR_DIR"
+    sudo cp -f "$REPO/wallpapers/$wallpaper" "$BG_DIR/$wallpaper"
+    sudo install -m 644 "$tmp/greeter.conf" "$GREETER_CONF"
+    sudo chown -R root:root "$THEME_DIR" "$CURSOR_DIR" "$BG_DIR"
+    sudo chmod -R u+rwX,go+rX,go-w "$THEME_DIR" "$CURSOR_DIR" "$BG_DIR"
+
+    if [ "$show_users" -eq 1 ]; then
+        printf '# ventura-xfce: lista de usuarios visible en el login\n[Seat:*]\ngreeter-hide-users=false\n' \
+            | sudo tee "$LIGHTDM_CONF" >/dev/null
+        sudo chmod 644 "$LIGHTDM_CONF"
+    else
+        sudo rm -f "$LIGHTDM_CONF"
+    fi
+
+    check_overrides
+    ok "Pantalla de inicio de sesión lista ($variant). Se verá al cerrar sesión o reiniciar."
+    echo "   Para volver a la de Xubuntu: ./scripts/login-screen remove"
+}
+
+# /etc/lightdm/lightdm-gtk-greeter.conf se lee después de nuestro fichero y gana
+check_overrides() {
+    local keys
+    keys=$(sed -n '/^\[greeter\]/,/^\[/p' "$MAIN_CONF" 2>/dev/null \
+        | grep -oE '^(theme-name|icon-theme-name|cursor-theme-name|background|user-background|font-name|position|indicators)=' \
+        | tr -d '=' | tr '\n' ' ' || true)
+    [ -z "$keys" ] || warn "$MAIN_CONF fija: ${keys}y eso tiene prioridad sobre este tema. Coméntalas si no se ve bien."
+}
+
+cmd_remove() {
+    msg "Quitando el tema de la pantalla de inicio de sesión (se te pedirá sudo)"
+    sudo rm -rf "$THEME_DIR" "$CURSOR_DIR" "$BG_DIR"
+    sudo rm -f "$GREETER_CONF" "$LIGHTDM_CONF"
+    sudo rmdir "$(dirname "$GREETER_CONF")" /etc/xdg/lightdm 2>/dev/null || true
+    ok "Vuelve la pantalla de inicio de sesión de Xubuntu."
+}
+
+cmd_status() {
+    if [ -f "$GREETER_CONF" ]; then
+        echo "login     : activo ($(sed -n 's/^# variant=//p' "$GREETER_CONF"))"
+        [ -f "$LIGHTDM_CONF" ] && echo "usuarios  : lista visible" || echo "usuarios  : ocultos (se escribe el nombre)"
+        check_overrides
+    else
+        echo "login     : el de Xubuntu (no aplicado)"
+    fi
+}
+
+case "${1:-}" in
+    apply)  shift; cmd_apply "$@" ;;
+    remove) cmd_remove ;;
+    status) cmd_status ;;
+    *) sed -n '2,10p' "$0"; exit 1 ;;
+esac

@@ -12,6 +12,7 @@ activarlo y desactivarlo cuando quieras.
 - **Panel superior** con la manzana y el **menú global** de aplicaciones
 - **Dock** con iconos de macOS (plank)
 - **Monitor de recursos** en conky: dos tarjetas translúcidas, sistema y gráficos
+- **Pantalla de inicio de sesión** (LightDM) con el mismo tema y fondo, opcional
 - Fondos de Ventura y, opcionalmente, el lanzador **Launchpad**
 
 ## Requisitos
@@ -28,6 +29,7 @@ git clone git@github.com:edronald7/xfce-theme-macos-ventura.git
 cd xfce-theme-macos-ventura
 ./scripts/install.sh                    # instala, sin activar nada todavía
 ./scripts/install.sh --with-lightpad    # además compila el Launchpad
+./scripts/install.sh --with-login       # además la pantalla de inicio de sesión
 ```
 
 Instala las dependencias con apt, descomprime temas e iconos en tu perfil y deja
@@ -47,6 +49,25 @@ Antes del primer `apply` se guarda tu configuración en
 CSS. `remove` los devuelve tal cual, así que puedes alternar entre este tema y el
 tuyo sin miedo.
 
+## Pantalla de inicio de sesión
+
+Va en un comando aparte, `scripts/login-screen`, porque necesita `sudo`: la
+pantalla de login la dibuja el usuario `lightdm`, que no puede leer tu carpeta
+personal, así que el tema, el cursor y el fondo se copian a `/usr/share`.
+
+```bash
+./scripts/login-screen apply                 # oscuro
+./scripts/login-screen apply --light         # claro
+./scripts/login-screen apply --show-users    # lista de usuarios con foto, como macOS
+./scripts/login-screen remove                # vuelve la de Xubuntu
+./scripts/login-screen status
+```
+
+Solo añade ficheros con el nombre `ventura-xfce` (ningún fichero del sistema se
+edita) y `remove` los borra todos. Los cambios se ven al cerrar sesión. Por
+defecto Ubuntu oculta la lista de usuarios y pide escribir el nombre;
+`--show-users` la muestra.
+
 ## Desinstalación
 
 ```bash
@@ -58,7 +79,7 @@ tuyo sin miedo.
 
 | Carpeta | Contenido |
 |---|---|
-| `scripts/` | `install.sh`, `uninstall.sh` y el comando `macos-theme` |
+| `scripts/` | `install.sh`, `uninstall.sh`, `login-screen` y el comando `macos-theme` |
 | `conky/` | Monitor de recursos: configuración y dibujo en Lua/Cairo |
 | `gtk/`, `cursors/` | Temas, iconos y cursores WhiteSur |
 | `config/`, `dock/` | Panel de XFCE y accesos del dock |
