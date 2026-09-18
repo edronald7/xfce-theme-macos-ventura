@@ -1,0 +1,461 @@
+#!/usr/bin/env bash
+# macos-theme — activa o desactiva el look Ventura-XFCE bajo demanda.
+#
+#   macos-theme apply [--light|--dark]   activa el tema (guarda tu configuración actual)
+#   macos-theme remove                   restaura exactamente lo que tenías antes
+#   macos-theme status                   muestra el estado actual
+#
+# Instalado por scripts/install.sh del repo ventura-xfce.
+
+set -uo pipefail
+
+PAYLOAD="${XDG_DATA_HOME:-$HOME/.local/share}/ventura-xfce"
+BACKUP="$PAYLOAD/backup"
+STATE="$PAYLOAD/state"
+XFCONF_DIR="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
+PANEL_DIR="$HOME/.config/xfce4/panel"
+TERM_RC="$HOME/.config/xfce4/terminal/terminalrc"
+PLANK_DIR="$HOME/.config/plank"
+GTK4_DIR="$HOME/.config/gtk-4.0"
+AUTOSTART="$HOME/.config/autostart/plank.desktop"
+CONKY_DIR="$HOME/.config/conky/ventura"
+CONKY_AUTOSTART="$HOME/.config/autostart/conky-ventura.desktop"
+
+msg()  { printf '\033[1;34m::\033[0m %s\n' "$*"; }
+ok()   { printf '\033[1;32m ✓\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m ! \033[0m%s\n' "$*" >&2; }
+die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Propiedades xfconf que tocamos: canal / propiedad / tipo
+# (solo estas; el resto de tu configuración no se toca)
+props_for_variant() {
+    local gtk_theme="$1" icon_theme="$2"
+    cat <<EOF
+xsettings	/Net/ThemeName	string	$gtk_theme
+xsettings	/Net/IconThemeName	string	$icon_theme
+xsettings	/Gtk/CursorThemeName	string	WhiteSur-cursors
+xsettings	/Gtk/DecorationLayout	string	close,minimize,maximize:
+xfwm4	/general/theme	string	$gtk_theme
+xfwm4	/general/button_layout	string	CHM|
+xfwm4	/general/use_compositing	bool	true
+xfwm4	/general/show_dock_shadow	bool	false
+xfwm4	/general/title_alignment	string	center
+EOF
+    # menú global de aplicaciones (solo si el plugin está instalado)
+    if [ -f /usr/lib/x86_64-linux-gnu/xfce4/panel/plugins/libappmenu-xfce.so ] \
+       && [ -f /usr/lib/x86_64-linux-gnu/gtk-3.0/modules/libappmenu-gtk-module.so ]; then
+        cat <<EOF
+xsettings	/Gtk/Modules	string	appmenu-gtk-module
+xsettings	/Gtk/ShellShowsMenubar	bool	true
+xsettings	/Gtk/ShellShowsAppmenu	bool	true
+EOF
+    fi
+}
+
+# CSS propio: espaciado de la manzana y de los menús del panel
+GTK3_CSS="$HOME/.config/gtk-3.0/gtk.css"
+CSS_BEGIN="/* >>> ventura-xfce: no editar, lo gestiona macos-theme >>> */"
+CSS_END="/* <<< ventura-xfce <<< */"
+
+css_strip() { # deja el fichero sin nuestro bloque
+    [ -f "$GTK3_CSS" ] || return 0
+    awk -v b="$CSS_BEGIN" -v e="$CSS_END" '
+        index($0,b){skip=1} !skip{print} index($0,e){skip=0}' "$GTK3_CSS" > "$GTK3_CSS.tmp"
+    mv "$GTK3_CSS.tmp" "$GTK3_CSS"
+    grep -q '[^[:space:]]' "$GTK3_CSS" || rm -f "$GTK3_CSS"
+}
+
+css_apply() {
+    mkdir -p "$(dirname "$GTK3_CSS")"
+    css_strip
+    { cat <<EOF
+$CSS_BEGIN
+/* aire a los lados de la manzana (plugin applicationsmenu) */
+.xfce4-panel.background button#applicationmenu-button,
+.xfce4-panel.background button.flat#applicationmenu-button {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+/* separación entre las entradas del menú global (Archivo, Editar, ...) */
+.xfce4-panel.background menubar.-vala-panel-appmenu-private > menuitem {
+  padding-left: 7px;
+  padding-right: 7px;
+}
+$CSS_END
+EOF
+    } >> "$GTK3_CSS"
+}
+
+state_get() { [ -f "$STATE" ] && grep -m1 "^$1=" "$STATE" 2>/dev/null | cut -d= -f2- || true; }
+is_applied() { [ "$(state_get applied)" = "1" ]; }
+
+require_payload() {
+    [ -d "$PAYLOAD" ] || die "No encuentro $PAYLOAD. Ejecuta primero scripts/install.sh"
+    [ -f "$PAYLOAD/xfconf/xfce4-panel.xml" ] || die "Payload incompleto en $PAYLOAD. Reinstala con scripts/install.sh"
+}
+
+set_prop() { # canal propiedad tipo valor
+    xfconf-query -c "$1" -p "$2" -s "$4" 2>/dev/null \
+        || xfconf-query -c "$1" -p "$2" -n -t "$3" -s "$4" 2>/dev/null \
+        || warn "no pude fijar $1$2"
+}
+
+reset_prop() { xfconf-query -c "$1" -p "$2" -r 2>/dev/null || true; }
+
+# ---------------------------------------------------------------- backup ----
+backup_scalars() {
+    mkdir -p "$BACKUP"
+    local f="$BACKUP/xfconf.tsv" ch prop type _v val
+    : > "$f"
+    props_for_variant WhiteSur-Dark WhiteSur-dark | while IFS=$'\t' read -r ch prop type _v; do
+        if val=$(xfconf-query -c "$ch" -p "$prop" 2>/dev/null); then
+            printf '%s\t%s\t%s\t%s\n' "$ch" "$prop" "$type" "$val" >> "$f"
+        else
+            printf '%s\t%s\t%s\t__UNSET__\n' "$ch" "$prop" "$type" >> "$f"
+        fi
+    done
+    # fondos de escritorio: solo las propiedades que existen en TU equipo
+    local w="$BACKUP/wallpaper.tsv"; : > "$w"
+    xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E '/(last-image|image-style)$' | while read -r prop; do
+        val=$(xfconf-query -c xfce4-desktop -p "$prop" 2>/dev/null) || continue
+        printf '%s\t%s\n' "$prop" "$val" >> "$w"
+    done
+}
+
+# si una re-aplicación introduce propiedades nuevas, guarda también su valor previo
+ensure_backup_entries() {
+    local f="$BACKUP/xfconf.tsv" ch prop type _v val
+    [ -f "$f" ] || { backup_scalars; return; }
+    props_for_variant WhiteSur-Dark WhiteSur-dark | while IFS=$'\t' read -r ch prop type _v; do
+        grep -qP "^\Q$ch\E\t\Q$prop\E\t" "$f" && continue
+        if val=$(xfconf-query -c "$ch" -p "$prop" 2>/dev/null); then
+            printf '%s\t%s\t%s\t%s\n' "$ch" "$prop" "$type" "$val" >> "$f"
+        else
+            printf '%s\t%s\t%s\t__UNSET__\n' "$ch" "$prop" "$type" >> "$f"
+        fi
+    done
+}
+
+backup_files() {
+    mkdir -p "$BACKUP/files"
+    [ -f "$XFCONF_DIR/xfce4-panel.xml" ] && cp -a "$XFCONF_DIR/xfce4-panel.xml" "$BACKUP/files/xfce4-panel.xml"
+    if [ -d "$PANEL_DIR" ]; then rm -rf "$BACKUP/files/panel"; cp -a "$PANEL_DIR" "$BACKUP/files/panel"
+    else : > "$BACKUP/files/.no-panel-dir"; fi
+    [ -f "$TERM_RC" ] && cp -a "$TERM_RC" "$BACKUP/files/terminalrc"
+    if [ -d "$PLANK_DIR" ]; then rm -rf "$BACKUP/files/plank"; cp -a "$PLANK_DIR" "$BACKUP/files/plank"
+    else : > "$BACKUP/files/.no-plank-dir"; fi
+    plank_backup
+    for f in gtk.css gtk-dark.css; do
+        [ -f "$GTK4_DIR/$f" ] && [ ! -L "$GTK4_DIR/$f" ] && cp -a "$GTK4_DIR/$f" "$BACKUP/files/gtk4-$f"
+    done
+    return 0
+}
+
+# ----------------------------------------------------------------- panel ----
+panel_stop() {
+    xfce4-panel --quit >/dev/null 2>&1 || true
+    sleep 1
+    pkill -x xfconfd >/dev/null 2>&1 || true   # obliga a releer los XML del disco
+    sleep 1
+}
+panel_start() {
+    if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        warn "sin sesión gráfica: arranca el panel a mano con 'xfce4-panel &'"
+        return
+    fi
+    setsid xfce4-panel >/dev/null 2>&1 < /dev/null &
+    disown 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------- plank ----
+# Plank 0.11 guarda su configuración en GSettings, NO en
+# ~/.config/plank/dock1/settings (ese fichero lo ignora). Solo los
+# .dockitem se leen del disco.
+PLANK_SCHEMA="net.launchpad.plank.dock.settings:/net/launchpad/plank/docks/dock1/"
+PLANK_KEYS="theme position alignment items-alignment icon-size hide-mode zoom-enabled zoom-percent offset show-dock-item lock-items"
+
+plank_has_gsettings() {
+    command -v gsettings >/dev/null 2>&1 && gsettings list-schemas 2>/dev/null | grep -q '^net.launchpad.plank$'
+}
+
+plank_backup() {
+    plank_has_gsettings || return 0
+    local f="$BACKUP/plank-gsettings.tsv" k v
+    [ -f "$f" ] && return 0            # conservamos la copia original
+    mkdir -p "$BACKUP"
+    : > "$f"
+    for k in $PLANK_KEYS; do
+        v=$(gsettings get "$PLANK_SCHEMA" "$k" 2>/dev/null) || continue
+        printf '%s\t%s\n' "$k" "$v" >> "$f"
+    done
+}
+
+plank_configure() {
+    plank_has_gsettings || { warn "no encuentro el esquema de plank; el dock usará sus valores"; return 0; }
+    gsettings set "$PLANK_SCHEMA" theme "'WhiteSur'"
+    gsettings set "$PLANK_SCHEMA" position "'bottom'"
+    gsettings set "$PLANK_SCHEMA" alignment "'center'"
+    gsettings set "$PLANK_SCHEMA" items-alignment "'center'"
+    gsettings set "$PLANK_SCHEMA" icon-size 48
+    gsettings set "$PLANK_SCHEMA" hide-mode "'none'"      # como en macOS: siempre visible
+    gsettings set "$PLANK_SCHEMA" zoom-enabled false      # la ampliación también viene desactivada allí
+    gsettings set "$PLANK_SCHEMA" offset 0
+    gsettings set "$PLANK_SCHEMA" show-dock-item false
+    gsettings set "$PLANK_SCHEMA" lock-items false
+}
+
+plank_restore() {
+    plank_has_gsettings || return 0
+    local f="$BACKUP/plank-gsettings.tsv" k v
+    [ -f "$f" ] || return 0
+    while IFS=$'\t' read -r k v; do
+        [ -n "${k:-}" ] || continue
+        gsettings set "$PLANK_SCHEMA" "$k" "$v" 2>/dev/null || true
+    done < "$f"
+}
+
+plank_start() {
+    command -v plank >/dev/null 2>&1 || { warn "plank no está instalado; me salto el dock"; return; }
+    pkill -x plank >/dev/null 2>&1 || true
+    sleep 1
+    setsid plank >/dev/null 2>&1 < /dev/null &
+    disown 2>/dev/null || true
+}
+
+# ───────────────────────────────────────────── monitor de recursos ────
+conky_stop() {
+    pkill -f 'conky -c .*conky/ventura/' >/dev/null 2>&1 || true
+}
+
+conky_start() {
+    [ -x "$CONKY_DIR/start.sh" ] || return 0
+    if ! command -v conky >/dev/null 2>&1; then
+        warn "conky no está instalado; me salto el monitor de recursos"
+        return 0
+    fi
+    conky_stop
+    if [ -z "${DISPLAY:-}" ]; then return 0; fi
+    setsid "$CONKY_DIR/start.sh" --now >/dev/null 2>&1 < /dev/null &
+    disown 2>/dev/null || true
+    mkdir -p "$(dirname "$CONKY_AUTOSTART")"
+    cat > "$CONKY_AUTOSTART" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Monitor de recursos (ventura-xfce)
+Exec=$CONKY_DIR/start.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+}
+
+# ------------------------------------------------------------------ gtk4 ----
+gtk4_link() {
+    local theme="$1" src="$HOME/.themes/$1/gtk-4.0" f
+    [ -d "$src" ] || return 0
+    mkdir -p "$GTK4_DIR"
+    for f in gtk.css gtk-dark.css assets; do
+        [ -e "$src/$f" ] && ln -sfn "$src/$f" "$GTK4_DIR/$f"
+    done
+    return 0
+}
+gtk4_unlink() {
+    local f p
+    for f in gtk.css gtk-dark.css assets; do
+        p="$GTK4_DIR/$f"
+        if [ -L "$p" ] && readlink "$p" | grep -q "/.themes/WhiteSur-"; then rm -f "$p"; fi
+    done
+    for f in gtk.css gtk-dark.css; do
+        [ -f "$BACKUP/files/gtk4-$f" ] && cp -a "$BACKUP/files/gtk4-$f" "$GTK4_DIR/$f"
+    done
+    return 0
+}
+
+# ----------------------------------------------------------------- apply ----
+cmd_apply() {
+    local variant=dark gtk_theme icon_theme wallpaper
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dark)  variant=dark ;;
+            --light) variant=light ;;
+            *) die "opción desconocida: $1" ;;
+        esac; shift
+    done
+    require_payload
+
+    if [ "$variant" = light ]; then
+        gtk_theme=WhiteSur-Light; icon_theme=WhiteSur; wallpaper="$HOME/.wallpapers/ventura-light.jpeg"
+    else
+        gtk_theme=WhiteSur-Dark;  icon_theme=WhiteSur-dark; wallpaper="$HOME/.wallpapers/ventura-dark.jpg"
+    fi
+    [ -d "$HOME/.themes/$gtk_theme" ] || die "Falta $HOME/.themes/$gtk_theme. Ejecuta scripts/install.sh"
+
+    if is_applied; then
+        msg "El tema ya estaba activo: lo vuelvo a aplicar (la copia de seguridad original se conserva)"
+        ensure_backup_entries
+    else
+        msg "Guardando tu configuración actual en $BACKUP"
+        backup_scalars
+        backup_files
+    fi
+
+    msg "Aplicando panel y launchers"
+    panel_stop
+    mkdir -p "$XFCONF_DIR"
+    cp -f "$PAYLOAD/xfconf/xfce4-panel.xml" "$XFCONF_DIR/xfce4-panel.xml"
+    if [ -n "$PANEL_DIR" ] && [ "$PANEL_DIR" != "$HOME" ]; then
+        rm -rf "$PANEL_DIR"; mkdir -p "$PANEL_DIR"
+        cp -a "$PAYLOAD/panel/." "$PANEL_DIR/"
+    fi
+    panel_start
+
+    msg "Aplicando tema GTK, bordes de ventana y cursor ($variant)"
+    props_for_variant "$gtk_theme" "$icon_theme" | while IFS=$'\t' read -r ch prop type val; do
+        set_prop "$ch" "$prop" "$type" "$val"
+    done
+    gtk4_link "$gtk_theme"
+    css_apply
+
+    if [ -f "$wallpaper" ]; then
+        msg "Poniendo el fondo de escritorio"
+        # cubre todos los monitores/espacios de trabajo de TU equipo
+        xfconf-query -c xfce4-desktop -l 2>/dev/null \
+            | grep -E '/(last-image|image-style)$' \
+            | sed -E 's#/(last-image|image-style)$##' | sort -u | while read -r ws; do
+            set_prop xfce4-desktop "$ws/last-image" string "$wallpaper"
+            set_prop xfce4-desktop "$ws/image-style" int 5
+        done
+    else
+        warn "no encuentro $wallpaper; dejo el fondo como estaba"
+    fi
+
+    if [ -f "$PAYLOAD/terminalrc" ]; then
+        mkdir -p "$(dirname "$TERM_RC")"
+        cp -f "$PAYLOAD/terminalrc" "$TERM_RC"
+    fi
+
+    if [ -d "$PAYLOAD/plank" ]; then
+        msg "Configurando el dock (plank)"
+        mkdir -p "$PLANK_DIR"
+        cp -a "$PAYLOAD/plank/." "$PLANK_DIR/"
+        plank_backup
+        plank_configure
+        mkdir -p "$(dirname "$AUTOSTART")"
+        cat > "$AUTOSTART" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Plank (ventura-xfce)
+Exec=plank
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+        plank_start
+    fi
+
+    mkdir -p "$PAYLOAD"
+    printf 'applied=1\nvariant=%s\ndate=%s\n' "$variant" "$(date -Is)" > "$STATE"
+
+    if [ -x "$CONKY_DIR/start.sh" ]; then
+        msg "Arrancando el monitor de recursos"
+        conky_start
+    fi
+    ok "Tema macOS activado ($variant). Para volver atrás: macos-theme remove"
+}
+
+# ---------------------------------------------------------------- remove ----
+cmd_remove() {
+    require_payload
+    is_applied || { warn "El tema no consta como activo; restauro igualmente lo que haya en la copia de seguridad"; }
+    [ -d "$BACKUP" ] || die "No hay copia de seguridad en $BACKUP; no puedo restaurar"
+
+    msg "Parando dock, monitor y panel"
+    pkill -x plank >/dev/null 2>&1 || true
+    conky_stop
+    rm -f "$AUTOSTART" "$CONKY_AUTOSTART"
+    panel_stop
+
+    msg "Restaurando panel y launchers"
+    if [ -f "$BACKUP/files/xfce4-panel.xml" ]; then
+        cp -f "$BACKUP/files/xfce4-panel.xml" "$XFCONF_DIR/xfce4-panel.xml"
+    else
+        rm -f "$XFCONF_DIR/xfce4-panel.xml"
+    fi
+    if [ -n "$PANEL_DIR" ] && [ "$PANEL_DIR" != "$HOME" ]; then
+        rm -rf "$PANEL_DIR"
+        [ -d "$BACKUP/files/panel" ] && cp -a "$BACKUP/files/panel" "$PANEL_DIR"
+    fi
+    panel_start
+
+    msg "Restaurando tema, iconos y cursor"
+    if [ -f "$BACKUP/xfconf.tsv" ]; then
+        while IFS=$'\t' read -r ch prop type val; do
+            [ -n "${ch:-}" ] || continue
+            if [ "$val" = "__UNSET__" ]; then reset_prop "$ch" "$prop"
+            else set_prop "$ch" "$prop" "$type" "$val"; fi
+        done < "$BACKUP/xfconf.tsv"
+    fi
+    gtk4_unlink
+    css_strip
+
+    if [ -f "$BACKUP/wallpaper.tsv" ]; then
+        msg "Restaurando el fondo de escritorio"
+        while IFS=$'\t' read -r prop val; do
+            [ -n "${prop:-}" ] || continue
+            case "$prop" in
+                */image-style) set_prop xfce4-desktop "$prop" int "$val" ;;
+                *) set_prop xfce4-desktop "$prop" string "$val" ;;
+            esac
+        done < "$BACKUP/wallpaper.tsv"
+    fi
+
+    if [ -f "$BACKUP/files/terminalrc" ]; then cp -f "$BACKUP/files/terminalrc" "$TERM_RC"
+    elif [ -f "$PAYLOAD/terminalrc" ]; then rm -f "$TERM_RC"; fi
+
+    plank_restore
+    if [ -n "$PLANK_DIR" ] && [ "$PLANK_DIR" != "$HOME" ]; then
+        rm -rf "$PLANK_DIR"
+        [ -d "$BACKUP/files/plank" ] && cp -a "$BACKUP/files/plank" "$PLANK_DIR"
+    fi
+
+    printf 'applied=0\ndate=%s\n' "$(date -Is)" > "$STATE"
+    ok "Tema macOS desactivado. Tu configuración anterior está de vuelta."
+    echo "   (Si algo quedó raro, cierra sesión y vuelve a entrar.)"
+}
+
+# ---------------------------------------------------------------- status ----
+cmd_status() {
+    echo "payload   : $PAYLOAD $( [ -d "$PAYLOAD" ] && echo '(ok)' || echo '(NO instalado)')"
+    echo "estado    : $(is_applied && echo 'ACTIVO' || echo 'inactivo')  variante=$(state_get variant)"
+    echo "backup    : $( [ -f "$BACKUP/xfconf.tsv" ] && echo "$BACKUP" || echo 'sin copia de seguridad')"
+    echo "--- valores actuales ---"
+    printf 'tema GTK  : %s\n'  "$(xfconf-query -c xsettings -p /Net/ThemeName 2>/dev/null || echo '-')"
+    printf 'iconos    : %s\n'  "$(xfconf-query -c xsettings -p /Net/IconThemeName 2>/dev/null || echo '-')"
+    printf 'cursor    : %s\n'  "$(xfconf-query -c xsettings -p /Gtk/CursorThemeName 2>/dev/null || echo '-')"
+    printf 'xfwm4     : %s\n'  "$(xfconf-query -c xfwm4 -p /general/theme 2>/dev/null || echo '-')"
+    printf 'plank     : %s\n'  "$(pgrep -x plank >/dev/null && echo 'en ejecución' || echo 'parado')"
+    printf 'monitor   : %s (%s tarjetas)\n' \
+        "$(pgrep -f 'conky/ventura/' >/dev/null && echo 'en ejecución' || echo 'parado')" \
+        "$(pgrep -cf 'conky -c .*conky/ventura/')"
+    printf 'menú global: %s (Gtk/Modules=%s)\n' \
+        "$(xfconf-query -c xsettings -p /Gtk/ShellShowsMenubar 2>/dev/null || echo 'sin definir')" \
+        "$(xfconf-query -c xsettings -p /Gtk/Modules 2>/dev/null || echo '-')"
+}
+
+usage() {
+    cat <<EOF
+Uso: macos-theme <orden>
+
+  apply [--dark|--light]   Activa el look macOS Ventura (por defecto oscuro).
+                           Guarda antes tu configuración actual.
+  remove                   Restaura la configuración que tenías antes de 'apply'.
+  status                   Muestra el estado y los valores actuales.
+  help                     Esta ayuda.
+EOF
+}
+
+case "${1:-help}" in
+    apply)  shift; cmd_apply "$@" ;;
+    remove|revert|off) cmd_remove ;;
+    status) cmd_status ;;
+    help|-h|--help) usage ;;
+    *) usage; exit 1 ;;
+esac
