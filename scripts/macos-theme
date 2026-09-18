@@ -306,14 +306,15 @@ cmd_apply() {
         rm -rf "$PANEL_DIR"; mkdir -p "$PANEL_DIR"
         cp -a "$PAYLOAD/panel/." "$PANEL_DIR/"
     fi
-    panel_start
 
+    # tema y CSS antes de arrancar el panel: GTK solo lee gtk.css al iniciar
     msg "Aplicando tema GTK, bordes de ventana y cursor ($variant)"
     props_for_variant "$gtk_theme" "$icon_theme" | while IFS=$'\t' read -r ch prop type val; do
         set_prop "$ch" "$prop" "$type" "$val"
     done
     gtk4_link "$gtk_theme"
     css_apply
+    panel_start
 
     if [ -f "$wallpaper" ]; then
         msg "Poniendo el fondo de escritorio"
@@ -383,7 +384,6 @@ cmd_remove() {
         rm -rf "$PANEL_DIR"
         [ -d "$BACKUP/files/panel" ] && cp -a "$BACKUP/files/panel" "$PANEL_DIR"
     fi
-    panel_start
 
     msg "Restaurando tema, iconos y cursor"
     if [ -f "$BACKUP/xfconf.tsv" ]; then
@@ -395,6 +395,7 @@ cmd_remove() {
     fi
     gtk4_unlink
     css_strip
+    panel_start
 
     if [ -f "$BACKUP/wallpaper.tsv" ]; then
         msg "Restaurando el fondo de escritorio"
